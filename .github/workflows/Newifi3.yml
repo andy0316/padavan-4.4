@@ -6,7 +6,7 @@ on:
 jobs:
   build:
     # [核心修复] 强制锁定 20.04 经典编译环境，拒绝新版 Ubuntu 删减依赖引发的连环报错
-    runs-on: ubuntu-20.04 
+    runs-on: ubuntu-22.04 
 
     steps:
       - name: Checkout Code
