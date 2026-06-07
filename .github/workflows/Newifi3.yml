@@ -1,0 +1,55 @@
+name: Build Newifi3 D2 
+
+on:
+  workflow_dispatch: # 仅保留手动触发，避免误触
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Prepare environment
+        run: |
+          sudo apt update
+          sudo apt install -y libtool-bin gperf python3-docutils autopoint gettext
+          
+      - name: Prepare toolchain
+        run: |
+          cd toolchain-mipsel
+          sh dl_toolchain.sh
+          
+      - name: Customize & Build Firmware
+        run: |
+          cd trunk
+          # 自动定位新路由3的配置文件
+          CONFIG_FILE="configs/boards/NEWIFI3/board.mk"
+          if [ ! -f "$CONFIG_FILE" ]; then
+             CONFIG_FILE="configs/boards/NEWIFI/board.mk"
+          fi
+          
+          echo "==== 开始执行终极精简与定制 ===="
+          # 1. 开启硬件加速 (HWNAT)，保证千兆跑满
+          sed -i 's/CONFIG_FIRMWARE_ENABLE_FLOWOFFLOAD=n/CONFIG_FIRMWARE_ENABLE_FLOWOFFLOAD=y/g' $CONFIG_FILE
+          
+          # 2. 强制开启核心组件：IPv6、SSL依赖、OpenVPN、WireGuard、AdGuardHome
+          for APP in IPV6 OPENSSL_EXE OPENSSL_EC OPENVPN WIREGUARD ADGUARDHOME; do
+              sed -i "/CONFIG_FIRMWARE_INCLUDE_${APP}/d" $CONFIG_FILE
+              echo "CONFIG_FIRMWARE_INCLUDE_${APP}=y" >> $CONFIG_FILE
+          done
+          
+          # 3. 彻底清剿所有不需要的臃肿/小众插件 (省出极大闪存空间)
+          # 名单包含：飞机信号、校园网认证、下载工具、防污染DNS、代理软件、KMS激活、网盘挂载
+          for APP in RTL_SDR DUMP1090 DOGCOM MINIEAP MENTOHUST ARIA TRANSMISSION SMARTDNS TROJAN VLMCSD ALIST; do
+              sed -i "s/CONFIG_FIRMWARE_INCLUDE_${APP}=y/CONFIG_FIRMWARE_INCLUDE_${APP}=n/g" $CONFIG_FILE
+          done
+          
+          echo "==== 开始专为新路由3编译 ===="
+          fakeroot ./build_firmware_ci NEWIFI3 || fakeroot ./build_firmware_ci NEWIFI
+          
+      - name: Upload firmware to Artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Newifi3_Pure_Ultimate_Firmware
+          path: trunk/images/*.trx
