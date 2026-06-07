@@ -1,0 +1,62 @@
+name: Build Newifi3
+
+on:
+  workflow_dispatch: # 仅保留手动触发
+
+jobs:
+  build:
+    # [核心修复] 强制锁定 20.04 经典编译环境，拒绝新版 Ubuntu 删减依赖引发的连环报错
+    runs-on: ubuntu-20.04 
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Prepare environment
+        run: |
+          sudo apt update
+          # [核心修复] 补齐 autotools 家族和底层依赖，彻底解决 ipset/libtoolize 报错
+          sudo apt install -y libtool-bin gperf python3-docutils autopoint gettext libltdl-dev autoconf automake pkg-config
+          
+      - name: Prepare toolchain
+        run: |
+          cd toolchain-mipsel
+          sh dl_toolchain.sh
+          
+      - name: Customize & Build Firmware
+        run: |
+          cd trunk
+          # 自动定位新路由3的配置文件
+          CONFIG_FILE="configs/boards/NEWIFI3/board.mk"
+          if [ ! -f "$CONFIG_FILE" ]; then
+             CONFIG_FILE="configs/boards/NEWIFI/board.mk"
+          fi
+          
+          echo "==== 开始执行终极精简与定制 ===="
+          # 1. 开启硬件加速 (HWNAT)，保证千兆跑满
+          sed -i 's/CONFIG_FIRMWARE_ENABLE_FLOWOFFLOAD=n/CONFIG_FIRMWARE_ENABLE_FLOWOFFLOAD=y/g' $CONFIG_FILE
+          
+          # 2. 强制开启核心组件：IPv6、SSL依赖、OpenVPN、WireGuard、AdGuardHome
+          for APP in IPV6 OPENSSL_EXE OPENSSL_EC OPENVPN WIREGUARD ADGUARDHOME; do
+              sed -i "/CONFIG_FIRMWARE_INCLUDE_${APP}/d" $CONFIG_FILE
+              echo "CONFIG_FIRMWARE_INCLUDE_${APP}=y" >> $CONFIG_FILE
+          done
+          
+          # 3. 彻底清剿所有不需要的臃肿/小众插件，释放 32MB 极限闪存
+          for APP in RTL_SDR DUMP1090 DOGCOM MINIEAP MENTOHUST ARIA TRANSMISSION SMARTDNS TROJAN VLMCSD ALIST; do
+              sed -i "s/CONFIG_FIRMWARE_INCLUDE_${APP}=y/CONFIG_FIRMWARE_INCLUDE_${APP}=n/g" $CONFIG_FILE
+          done
+          
+          echo "==== 开始专为新路由3编译 ===="
+          # 清理历史残留缓存，防止环境污染
+          ./clear_tree || true
+          
+          # 单点爆破编译
+          fakeroot ./build_firmware_ci NEWIFI3 || fakeroot ./build_firmware_ci NEWIFI
+          
+      - name: Upload firmware to Artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Newifi3_Pure_Ultimate_Firmware
+          path: trunk/images/*.trx
